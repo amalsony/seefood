@@ -1,12 +1,14 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // 1. Tell Webpack NOT to touch the C++ ONNX engine
   serverExternalPackages: ["onnxruntime-node"],
 
-  // 2. Force Vercel to copy your models folder into the serverless function
   outputFileTracingIncludes: {
-    "/api/predict": ["./models/**/*"],
+    "/api/predict": [
+      "./models/**/*",
+      // Forces Vercel to bundle the native Linux C++ engine
+      "./node_modules/onnxruntime-node/bin/napi-v3/linux-x64/**/*",
+    ],
   },
 };
 
