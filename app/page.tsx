@@ -1,5 +1,6 @@
 "use client";
 
+import NextImage from "next/image";
 import { useState, useRef } from "react";
 import * as ort from "onnxruntime-web";
 
@@ -127,7 +128,7 @@ export default function SeeFoodApp() {
             </h1>
           </div>
           <div className="bg-white text-[#cc0000] font-bold text-xl text-center py-2 border-b-4 border-black shadow-sm z-10">
-            "The Shazam for Food"
+            &quot;The Shazam for Food&quot;
           </div>
 
           {/* Fake Food Grid Background */}
@@ -181,9 +182,12 @@ export default function SeeFoodApp() {
               className={`object-cover w-full h-full ${appState === "camera" ? "block" : "hidden"}`}
             />
             {previewUrl && (
-              <img
+              <NextImage
                 src={previewUrl}
                 alt="Captured"
+                fill
+                unoptimized
+                sizes="100vw"
                 className="object-cover w-full h-full"
               />
             )}
@@ -217,13 +221,20 @@ export default function SeeFoodApp() {
 
           {/* Tap to Reset Hint (Only in Result mode) */}
           {appState === "result" && (
-            <div
-              className="absolute bottom-10 left-0 w-full text-center z-50 cursor-pointer"
-              onClick={resetApp}
-            >
-              <span className="bg-black/70 text-white px-6 py-3 rounded-full font-bold shadow-lg backdrop-blur-md border border-white/20">
+            <div className="absolute bottom-10 left-1/2 z-50 flex w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 flex-col items-center gap-3">
+              <button
+                className="w-full cursor-pointer rounded-full border border-white/20 bg-black/70 px-6 py-3 text-center font-bold text-white shadow-lg backdrop-blur-md"
+                onClick={resetApp}
+              >
                 Tap anywhere to reset
-              </span>
+              </button>
+              <button
+                className="w-full cursor-pointer rounded-full border border-white/20 bg-black/70 px-6 py-3 text-center font-bold text-white shadow-lg backdrop-blur-md"
+                // link to amalsony.com
+                onClick={() => window.open("http://www.amalsony.com")}
+              >
+                Check out my other projects 🧑‍💻
+              </button>
             </div>
           )}
 
