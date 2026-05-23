@@ -224,16 +224,16 @@ export default function SeeFoodApp() {
             <div className="absolute bottom-10 left-1/2 z-50 flex w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 flex-col items-center gap-3">
               <button
                 className="w-full cursor-pointer rounded-full border border-white/20 bg-black/70 px-6 py-3 text-center font-bold text-white shadow-lg backdrop-blur-md"
-                onClick={resetApp}
-              >
-                Tap anywhere to reset
-              </button>
-              <button
-                className="w-full cursor-pointer rounded-full border border-white/20 bg-black/70 px-6 py-3 text-center font-bold text-white shadow-lg backdrop-blur-md"
                 // link to amalsony.com
                 onClick={() => window.open("http://www.amalsony.com")}
               >
                 Check out my other projects 🧑‍💻
+              </button>
+              <button
+                className="w-full cursor-pointer rounded-full border border-white/20 bg-black/70 px-6 py-3 text-center font-bold text-white shadow-lg backdrop-blur-md"
+                onClick={resetApp}
+              >
+                Tap anywhere to reset
               </button>
             </div>
           )}
