@@ -3,92 +3,78 @@
 import { useState, useRef } from "react";
 import * as ort from "onnxruntime-web";
 
+type AppState = "landing" | "camera" | "analyzing" | "result";
+
 export default function SeeFoodApp() {
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [appState, setAppState] = useState<AppState>("landing");
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [verdict, setVerdict] = useState<"hotdog" | "not_hotdog" | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
 
-  const [isCameraMode, setIsCameraMode] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
+  // 1. Enter Camera Mode
   const startCamera = async () => {
+    setAppState("camera");
     setVerdict(null);
-    setSelectedFile(null);
     setPreviewUrl(null);
-    setIsCameraMode(true);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "environment" },
       });
-      if (videoRef.current) videoRef.current.srcObject = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
       streamRef.current = stream;
     } catch (err) {
       console.error(err);
-      alert("Could not access the camera.");
-      setIsCameraMode(false);
+      alert("Could not access the camera. Please check permissions.");
+      setAppState("landing");
     }
   };
 
   const stopCamera = () => {
-    if (streamRef.current)
+    if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
-    setIsCameraMode(false);
-  };
-
-  const capturePhoto = () => {
-    if (videoRef.current) {
-      const canvas = document.createElement("canvas");
-      canvas.width = videoRef.current.videoWidth;
-      canvas.height = videoRef.current.videoHeight;
-      const ctx = canvas.getContext("2d");
-      ctx?.drawImage(videoRef.current, 0, 0);
-      canvas.toBlob((blob) => {
-        if (blob) {
-          const file = new File([blob], "capture.jpg", { type: "image/jpeg" });
-          setSelectedFile(file);
-          setPreviewUrl(URL.createObjectURL(file));
-          stopCamera();
-        }
-      }, "image/jpeg");
     }
   };
 
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      if (isCameraMode) stopCamera();
-      setSelectedFile(file);
-      setPreviewUrl(URL.createObjectURL(file));
-      setVerdict(null);
-    }
-  };
+  // 2. Snap Photo and Immediately Analyze
+  const captureAndAnalyze = async () => {
+    if (!videoRef.current) return;
 
-  // The New WebAssembly Brain!
-  const analyzeImage = async () => {
-    if (!previewUrl) return;
-    setIsLoading(true);
-    setVerdict(null);
+    // Snap the photo
+    const canvas = document.createElement("canvas");
+    canvas.width = videoRef.current.videoWidth;
+    canvas.height = videoRef.current.videoHeight;
+    const ctx = canvas.getContext("2d");
+    ctx?.drawImage(videoRef.current, 0, 0);
+
+    const imageUrl = canvas.toDataURL("image/jpeg");
+    setPreviewUrl(imageUrl);
+    stopCamera();
+
+    // Move to analyzing state
+    setAppState("analyzing");
 
     try {
-      // 1. Load the image into an HTML Canvas to extract the pixels
       const img = new Image();
-      img.src = previewUrl;
+      img.src = imageUrl;
       await new Promise((resolve) => {
         img.onload = resolve;
       });
 
-      const canvas = document.createElement("canvas");
-      canvas.width = 224;
-      canvas.height = 224;
-      const ctx = canvas.getContext("2d", { willReadFrequently: true });
-      if (!ctx) throw new Error("Canvas not supported");
+      const scaleCanvas = document.createElement("canvas");
+      scaleCanvas.width = 224;
+      scaleCanvas.height = 224;
+      const scaleCtx = scaleCanvas.getContext("2d", {
+        willReadFrequently: true,
+      });
+      if (!scaleCtx) throw new Error("Canvas not supported");
 
-      ctx.drawImage(img, 0, 0, 224, 224);
-      const imageData = ctx.getImageData(0, 0, 224, 224).data;
+      scaleCtx.drawImage(img, 0, 0, 224, 224);
+      const imageData = scaleCtx.getImageData(0, 0, 224, 224).data;
 
-      // 2. Preprocess the pixels (The PyTorch transforms in pure JS)
       const float32Data = new Float32Array(3 * 224 * 224);
       const mean = [0.485, 0.456, 0.406];
       const std = [0.229, 0.224, 0.225];
@@ -96,115 +82,157 @@ export default function SeeFoodApp() {
       let i = 0;
       for (let y = 0; y < 224; y++) {
         for (let x = 0; x < 224; x++) {
-          const idx = (y * 224 + x) * 4; // RGBA array
-          float32Data[i] = (imageData[idx] / 255.0 - mean[0]) / std[0]; // Red
+          const idx = (y * 224 + x) * 4;
+          float32Data[i] = (imageData[idx] / 255.0 - mean[0]) / std[0];
           float32Data[i + 50176] =
-            (imageData[idx + 1] / 255.0 - mean[1]) / std[1]; // Green (224*224 offset)
+            (imageData[idx + 1] / 255.0 - mean[1]) / std[1];
           float32Data[i + 100352] =
-            (imageData[idx + 2] / 255.0 - mean[2]) / std[2]; // Blue (2*224*224 offset)
+            (imageData[idx + 2] / 255.0 - mean[2]) / std[2];
           i++;
         }
       }
 
-      // 3. Run the WASM Engine
-      // It downloads the model from your public folder automatically
       const session = await ort.InferenceSession.create("/seefood.onnx");
       const tensor = new ort.Tensor("float32", float32Data, [1, 3, 224, 224]);
       const results = await session.run({ input: tensor });
 
       const output = results.output.data as Float32Array;
-      console.log("WebAssembly Scores:", {
-        hotdog: output[0],
-        not_hotdog: output[1],
-      });
-
       setVerdict(output[0] > output[1] ? "hotdog" : "not_hotdog");
+      setAppState("result");
     } catch (error) {
       console.error("Error analyzing image:", error);
-      alert("Failed to run the local brain.");
-    } finally {
-      setIsLoading(false);
+      alert("Failed to run the brain.");
+      setAppState("landing");
     }
   };
 
+  const resetApp = () => {
+    setAppState("landing");
+    setVerdict(null);
+    setPreviewUrl(null);
+  };
+
   return (
-    <main className="relative flex flex-col items-center justify-center min-h-screen bg-neutral-900 overflow-hidden font-sans pb-32">
-      {verdict === "hotdog" && (
-        <div className="absolute top-0 left-0 w-full bg-green-500 text-white text-6xl font-black py-6 text-center z-20 shadow-2xl tracking-tighter">
-          Hotdog!
-        </div>
-      )}
-
-      {verdict === "not_hotdog" && (
-        <div className="absolute top-0 left-0 w-full bg-red-600 text-white text-6xl font-black py-6 text-center z-20 shadow-2xl tracking-tighter flex flex-col items-center">
-          Not hotdog!
-          <span className="text-8xl mt-2">✕</span>
-        </div>
-      )}
-
-      <div className="relative w-full max-w-md aspect-[3/4] bg-neutral-800 rounded-2xl overflow-hidden shadow-2xl border-4 border-neutral-700 z-10 flex items-center justify-center">
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          className={`object-cover w-full h-full ${isCameraMode ? "block" : "hidden"}`}
-        />
-        {!isCameraMode && previewUrl && (
-          <img
-            src={previewUrl}
-            alt="Target"
-            className="object-cover w-full h-full"
-          />
-        )}
-        {!isCameraMode && !previewUrl && (
-          <span className="text-neutral-500 text-xl font-medium">
-            No target acquired
-          </span>
-        )}
-
-        {isLoading && (
-          <div className="absolute inset-0 bg-black/60 flex items-center justify-center backdrop-blur-sm z-30">
-            <div className="animate-spin rounded-full h-20 w-20 border-t-4 border-b-4 border-white"></div>
+    <main className="relative w-full h-[100svh] bg-black overflow-hidden font-sans select-none">
+      {/* --- SCREEN 1: THE SPLASH PAGE --- */}
+      {appState === "landing" && (
+        <div className="absolute inset-0 flex flex-col bg-white">
+          {/* Classic Red Header */}
+          <div className="bg-[#cc0000] pt-12 pb-2 border-b-4 border-black flex items-center justify-center shadow-md z-10">
+            <h1
+              className="text-white text-5xl font-black tracking-widest"
+              style={{ WebkitTextStroke: "1.5px black" }}
+            >
+              SEEFOOD
+            </h1>
           </div>
-        )}
-      </div>
+          <div className="bg-white text-[#cc0000] font-bold text-xl text-center py-2 border-b-4 border-black shadow-sm z-10">
+            "The Shazam for Food"
+          </div>
 
-      <div className="absolute bottom-6 flex flex-col gap-3 z-20 w-full max-w-md px-6">
-        {isCameraMode ? (
-          <button
-            onClick={capturePhoto}
-            className="w-full bg-white hover:bg-neutral-200 text-neutral-900 text-xl font-bold py-4 rounded-xl transition-colors shadow-lg"
-          >
-            📸 Snap Photo
-          </button>
-        ) : (
-          <div className="flex gap-2">
+          {/* Fake Food Grid Background */}
+          <div className="flex-1 flex flex-col w-full">
+            <div className="flex-1 bg-[url('https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=800&q=80')] bg-cover bg-center border-b-2 border-neutral-300"></div>
+            <div className="flex-1 bg-[url('https://images.unsplash.com/photo-1485921325833-c519f76c4927?w=800&q=80')] bg-cover bg-center border-b-2 border-neutral-300"></div>
+            <div className="flex-1 bg-[url('https://images.unsplash.com/photo-1473093295043-cdd812d0e601?w=800&q=80')] bg-cover bg-center"></div>
+          </div>
+
+          {/* Bottom Camera Trigger */}
+          <div className="absolute bottom-0 left-0 w-full h-48 bg-gradient-to-t from-black/80 via-black/50 to-transparent flex flex-col items-center justify-end pb-8">
             <button
               onClick={startCamera}
-              className="flex-1 bg-neutral-700 hover:bg-neutral-600 text-white text-lg font-bold py-4 rounded-xl transition-colors shadow-lg"
-            >
-              Open Camera
-            </button>
-            <label className="flex-1 bg-neutral-700 hover:bg-neutral-600 text-white text-lg font-bold py-4 rounded-xl cursor-pointer text-center transition-colors shadow-lg">
-              Upload
-              <input
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={handleImageChange}
-              />
-            </label>
+              className="w-20 h-20 bg-[#cc0000] rounded-full border-[6px] border-white shadow-2xl mb-3 active:scale-90 transition-transform"
+            />
+            <p className="text-white font-extrabold text-2xl drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)] tracking-tight">
+              Touch to SEEFOOD
+            </p>
           </div>
-        )}
+        </div>
+      )}
 
-        <button
-          onClick={analyzeImage}
-          disabled={!previewUrl || isLoading || isCameraMode}
-          className="w-full bg-cyan-400 hover:bg-cyan-300 disabled:bg-neutral-800 disabled:text-neutral-600 text-neutral-900 text-2xl font-black py-4 rounded-xl transition-colors shadow-lg"
-        >
-          {isLoading ? "Analyzing..." : "Identify"}
-        </button>
-      </div>
+      {/* --- SCREEN 2 & 3 & 4: CAMERA / ANALYZING / RESULT --- */}
+      {appState !== "landing" && (
+        <div className="absolute inset-0 bg-black flex flex-col">
+          {/* Top Banner (Only visible on result) */}
+          {appState === "result" && verdict === "hotdog" && (
+            <div
+              className="absolute top-0 left-0 w-full bg-[#00ff00] text-white text-6xl font-black pt-12 pb-6 text-center z-50 shadow-2xl tracking-tighter border-b-4 border-black"
+              onClick={resetApp}
+            >
+              Hotdog!
+            </div>
+          )}
+          {appState === "result" && verdict === "not_hotdog" && (
+            <div
+              className="absolute top-0 left-0 w-full bg-[#cc0000] text-white text-6xl font-black pt-12 pb-6 text-center z-50 shadow-2xl tracking-tighter flex flex-col items-center border-b-4 border-black"
+              onClick={resetApp}
+            >
+              Not hotdog!
+              <span className="text-8xl mt-1 leading-none">✕</span>
+            </div>
+          )}
+
+          {/* Viewfinder / Image Preview */}
+          <div className="flex-1 relative w-full overflow-hidden">
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              className={`object-cover w-full h-full ${appState === "camera" ? "block" : "hidden"}`}
+            />
+            {previewUrl && (
+              <img
+                src={previewUrl}
+                alt="Captured"
+                className="object-cover w-full h-full"
+              />
+            )}
+
+            {/* Loading Spinner */}
+            {appState === "analyzing" && (
+              <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center backdrop-blur-sm z-30">
+                <div className="animate-spin rounded-full h-24 w-24 border-t-8 border-b-8 border-white mb-6"></div>
+                <p className="text-white font-bold text-2xl animate-pulse">
+                  Analyzing...
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Camera Controls (Only in Camera mode) */}
+          {appState === "camera" && (
+            <div className="absolute bottom-0 left-0 w-full h-32 bg-black/50 flex items-center justify-center pb-6">
+              <button
+                onClick={captureAndAnalyze}
+                className="w-20 h-20 bg-white rounded-full border-4 border-neutral-300 shadow-2xl active:scale-90 transition-transform"
+              />
+              <button
+                onClick={resetApp}
+                className="absolute left-6 text-white font-bold text-lg"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+
+          {/* Tap to Reset Hint (Only in Result mode) */}
+          {appState === "result" && (
+            <div
+              className="absolute bottom-10 left-0 w-full text-center z-50 cursor-pointer"
+              onClick={resetApp}
+            >
+              <span className="bg-black/70 text-white px-6 py-3 rounded-full font-bold shadow-lg backdrop-blur-md border border-white/20">
+                Tap anywhere to reset
+              </span>
+            </div>
+          )}
+
+          {/* Invisible overlay to catch clicks on the result image to reset */}
+          {appState === "result" && (
+            <div className="absolute inset-0 z-40" onClick={resetApp}></div>
+          )}
+        </div>
+      )}
     </main>
   );
 }
